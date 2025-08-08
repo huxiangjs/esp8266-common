@@ -1,0 +1,72 @@
+name: ESP8266 CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        required: true
+        default: 'main'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    # Checkout the repository to the GitHub Actions runner
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        path: esp8266-common
+
+    # Get ESP8266-RTOS-SDK
+    - name: Get ESP8266-RTOS-SDK
+      uses: actions/checkout@v4
+      with:
+        repository: espressif/ESP8266_RTOS_SDK
+        ref: release/v3.3
+        fetch-depth: 1
+        path: ESP8266_RTOS_SDK
+
+    # Cache ESP8266-RTOS-SDK
+    - name: Cache ESP8266-RTOS-SDK
+      id: cache-esp8266-sdk
+      uses: actions/cache@v3
+      with:
+        path: |
+          ESP8266_RTOS_SDK
+          xtensa-lx106-elf
+        key: ${{ runner.os }}-esp8266-sdk-${{ hashFiles('ESP8266_RTOS_SDK/.git/refs/heads/release/v3.3') }}
+        restore-keys: |
+          ${{ runner.os }}-esp8266-sdk-
+
+    # Install ESP8266-RTOS-SDK
+    - name: Install ESP8266-RTOS-SDK
+      if: steps.cache-esp8266-sdk.outputs.cache-hit != 'true'
+      run: |
+        wget https://dl.espressif.com/dl/xtensa-lx106-elf-linux64-1.22.0-100-ge567ec7-5.2.0.tar.gz
+        tar zxf xtensa-lx106-elf-linux64-1.22.0-100-ge567ec7-5.2.0.tar.gz
+        cd ESP8266_RTOS_SDK/
+        pip install -r requirements.txt
+
+    # Generate project
+    - name: Generate project
+      run: |
+        mkdir tmp
+        cd tmp
+        cp -r ../ESP8266_RTOS_SDK/examples/get-started/hello_world/* .
+        cp -r ../esp8266-common/* main/
+        cat << EOF > main/component.mk
+        # test
+        EOF
+
+    # Run ESP8266 build command
+    - name: Build
+      run: |
+        export PATH:$PATH:$(pwd)/xtensa-lx106-elf/bin
+        cd tmp
+        make -j$(nproc)
