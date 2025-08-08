@@ -32,6 +32,12 @@ jobs:
         fetch-depth: 1
         path: ESP8266_RTOS_SDK
 
+    # Set python version
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10.12'
+
     # Cache ESP8266-RTOS-SDK
     - name: Cache ESP8266-RTOS-SDK
       id: cache-esp8266-sdk
