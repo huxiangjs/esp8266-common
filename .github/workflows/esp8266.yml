@@ -82,7 +82,7 @@ jobs:
     # Install dependencies
     - name: Install dependencies
       if: steps.cache-pip.outputs.cache-hit != 'true'
-      run: pip install -r ESP8266_RTOS_SDK/requirements.txt
+      run: pip install --user -r ESP8266_RTOS_SDK/requirements.txt
 
     # Generate project
     - name: Generate project
