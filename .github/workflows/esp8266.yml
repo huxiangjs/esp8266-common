@@ -67,6 +67,7 @@ jobs:
     # Run ESP8266 build command
     - name: Build
       run: |
+        export IDF_PATH=$(pwd)/ESP8266_RTOS_SDK/
         export PATH=$PATH:$(pwd)/xtensa-lx106-elf/bin
         cd tmp
         make -j$(nproc)
