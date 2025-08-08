@@ -40,7 +40,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10.12'
+        python-version: '3.11'
 
     # Cache ESP8266-RTOS-SDK
     - name: Cache ESP8266-RTOS-SDK
