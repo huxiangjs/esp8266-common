@@ -32,6 +32,10 @@ jobs:
         fetch-depth: 1
         path: ESP8266_RTOS_SDK
 
+    # Install gperf
+    - name: Install gperf
+      run: sudo apt-get install -y gperf
+
     # Set python version
     - name: Set up Python
       uses: actions/setup-python@v5
