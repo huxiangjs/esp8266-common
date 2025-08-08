@@ -67,6 +67,6 @@ jobs:
     # Run ESP8266 build command
     - name: Build
       run: |
-        export PATH:$PATH:$(pwd)/xtensa-lx106-elf/bin
+        export PATH=$PATH:$(pwd)/xtensa-lx106-elf/bin
         cd tmp
         make -j$(nproc)
