@@ -23,6 +23,14 @@ jobs:
         submodules: recursive
         path: esp8266-common
 
+    # Get esp32-common
+    - name: Get esp32-common
+      uses: actions/checkout@v4
+      with:
+        repository: huxiangjs/esp32-common
+        fetch-depth: 1
+        path: esp32-common
+
     # Get ESP8266-RTOS-SDK
     - name: Get ESP8266-RTOS-SDK
       uses: actions/checkout@v4
@@ -84,7 +92,7 @@ jobs:
         cp -r ../ESP8266_RTOS_SDK/examples/get-started/hello_world/* .
         cp -r ../esp8266-common/* main/
         cat << EOF > main/component.mk
-        # test
+        COMPONENT_ADD_INCLUDEDIRS := . ../../esp32-common/
         EOF
 
     # Run ESP8266 build command
