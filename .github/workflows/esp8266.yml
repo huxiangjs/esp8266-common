@@ -80,4 +80,5 @@ jobs:
         export IDF_PATH=$(pwd)/ESP8266_RTOS_SDK/
         export PATH=$PATH:$(pwd)/xtensa-lx106-elf/bin
         cd tmp
+        make defconfig
         make -j$(nproc)
