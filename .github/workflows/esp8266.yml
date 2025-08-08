@@ -71,20 +71,12 @@ jobs:
 
     # Cache pip dependencies
     - name: Cache pip dependencies
-      id: cache-pip
       uses: actions/cache@v3
       with:
-        path: |
-          ~/.cache/pip
-          ~/.local/share
+        path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('ESP8266_RTOS_SDK/requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
-
-    # Install dependencies
-    - name: Install dependencies
-      if: steps.cache-pip.outputs.cache-hit != 'true'
-      run: pip install -r ESP8266_RTOS_SDK/requirements.txt
 
     # Generate project
     - name: Generate project
@@ -100,6 +92,7 @@ jobs:
     # Run ESP8266 build command
     - name: Build
       run: |
+        pip install -r ESP8266_RTOS_SDK/requirements.txt
         export IDF_PATH=$(pwd)/ESP8266_RTOS_SDK/
         export PATH=$PATH:$(pwd)/xtensa-lx106-elf/bin
         cd tmp
