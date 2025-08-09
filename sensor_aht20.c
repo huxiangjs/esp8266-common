@@ -1,0 +1,268 @@
+/*
+ * MIT License
+ *
+ * Copyright (c) 2025 huxiangjs
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_system.h>
+#include <esp_log.h>
+
+#include "event_bus.h"
+#include "i2c_bus.h"
+#include "sensor_aht20.h"
+
+static const char *TAG = "SENSOR-AHT20";
+
+#define INTERVAL_TIME			1000	/* 1000ms */
+
+#define AHT20_CMD_INIT			0xBE	/* Initialization Command */
+#define AHT20_CMD_TRIG			0xAC	/* Triggered measurement */
+#define AHT20_CMD_RESET			0xBA	/* Software reset */
+
+#define AHT20_INADDR_WHAT		0x70	/* ? */
+#define AHT20_INADDR_STATUS		0x71	/* Status Register */
+
+static bool aht20_active;
+static uint16_t aht20_temperature;
+static uint16_t aht20_humidity;
+
+/* Read the status register of AHT20 */
+static bool sensor_aht20_read_status(uint8_t *status)
+{
+	return i2c_bus_in_read(DEFAULT_AHT20_ADDR, AHT20_INADDR_STATUS, status, 1);
+}
+
+/* Check whether the calibration bit is enabled */
+static bool sensor_aht20_read_calib_en(bool *enable)
+{
+	uint8_t status;
+	bool ret;
+
+	ret = sensor_aht20_read_status(&status);
+	if (!ret)
+		return false;
+
+	*enable = (bool)((status & 0x68) == 0x08);
+
+	return true;
+}
+
+/* Send AC measurement command to AHT20 */
+static bool sensor_aht20_write_ac(void)
+{
+	uint8_t cmd_tables[] = { AHT20_CMD_TRIG, 0x33, 0x00 };
+	return i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_WHAT,
+				cmd_tables, sizeof(cmd_tables));
+}
+
+/* CRC8/MAXIM, CRC[7:0] = 1 + x^4 + x^5 + x^8 */
+static uint8_t sensor_aht20_crc8(const uint8_t *buffer, uint8_t size)
+{
+	uint8_t i, byte;
+	uint8_t crc = 0xFF;
+
+	for (byte = 0; byte < size; byte++) {
+		crc ^= buffer[byte];
+		for(i = 8; i > 0; --i)
+			crc = (crc & 0x80) ? ((crc << 1) ^ 0x31) : (crc << 1);
+	}
+
+	return crc;
+}
+
+/* Read temperature and humidity data from AHT20 */
+static bool sensor_aht20_read_data(bool crc_en)
+{
+	uint32_t raw_humidity;
+	uint32_t raw_temperature;
+	uint8_t buffer[7];
+	uint8_t status;
+	uint8_t retry = 0;
+	uint16_t size = 6;
+	bool ret;
+
+	sensor_aht20_write_ac();
+	vTaskDelay(pdMS_TO_TICKS(100));
+
+	do {
+		vTaskDelay(pdMS_TO_TICKS(80));
+		ret = sensor_aht20_read_status(&status);
+		if (!ret)
+			return false;
+		/*
+		 * Until the status bit[7] is 0, it indicates idle state,
+		 * if it is 1, it indicates busy state.
+		 */
+		if ((status & 0x80) != 0x80)
+			break;
+		retry++;
+	} while (retry > 100);
+	if (retry > 100) {
+		ESP_LOGE(TAG, "Waiting timeout");
+		return false;
+	}
+
+	/*
+	 * Register Map:
+	 *   byte[0]: Status Register.
+         *       The status is 0x98, which means busy state, bit[7] is 1
+	 *       The status is 0x1C, or 0x0C, or 0x08, which means idle state, bit[7] is 0
+	 *   byte[2:1]: Humidity
+	 *   byte[3]: Humidity/Temperature
+	 *   byte[5:4]: Yemperature
+	 *   byte[6]: CRC
+	 */
+	/* Read data */
+	size += (uint16_t)crc_en;
+	ret = i2c_bus_in_read(DEFAULT_AHT20_ADDR, AHT20_INADDR_STATUS, buffer, size);
+	if (!ret)
+		return false;
+
+	/* Compare CRC8 value */
+	if (crc_en && sensor_aht20_crc8(buffer, 6) != buffer[6]) {
+		ESP_LOGE(TAG, "CRC8 mismatch");
+		return false;
+	}
+
+	raw_humidity = (buffer[1] << 12) | (buffer[2] << 4) | (buffer[3] >> 4);
+	raw_temperature = ((buffer[3] & 0xF) << 16) | (buffer[4] << 8) | buffer[5];
+
+	/* Humidity %RH (Keep one decimal place) */
+	aht20_humidity = (uint16_t)(raw_humidity * 100 * 10 / 1024 / 1024);
+	/* Temperature ℃ (Keep one decimal place) */
+	aht20_temperature = (uint16_t)(raw_temperature * 200 * 10 / 1024 / 1024 - 500);
+
+	return true;
+}
+
+/* Reinitialize registers */
+static bool sensor_aht20_reg_reset(uint8_t value)
+{
+	uint8_t buffer[3] = {0};
+	bool ret;
+
+	buffer[0] = value;
+	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_WHAT, buffer, 3);
+	if (!ret)
+		return false;
+
+	vTaskDelay(pdMS_TO_TICKS(80));
+	ret = i2c_bus_in_read(DEFAULT_AHT20_ADDR, AHT20_INADDR_STATUS, buffer, 3);
+	if (!ret)
+		return false;
+
+	vTaskDelay(pdMS_TO_TICKS(80));
+	buffer[0] = 0xB0 | value;
+	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_WHAT, buffer, 3);
+	if (!ret)
+		return false;
+
+	return true;
+}
+
+static void sensor_aht20_task(void *pvParameters)
+{
+	struct event_bus_msg msg;
+	int ret;
+	uint8_t status;
+	bool enable;
+
+	vTaskDelay(pdMS_TO_TICKS(40));
+
+	/*
+	 * After power on, send 0x71 to read the status value for the first time
+	 * and check if the status word is 0x18.
+	 * If not, initialize the registers.
+	 */
+	ret = sensor_aht20_read_status(&status);
+	if (!ret) {
+		ESP_LOGE(TAG, "Failed to read status");
+		goto err;
+	}
+	if((status & 0x18) != 0x18) {
+		ret = sensor_aht20_reg_reset(0x1b) &&
+		      sensor_aht20_reg_reset(0x1c) &&
+		      sensor_aht20_reg_reset(0x1e);
+		if (!ret) {
+			ESP_LOGE(TAG, "Failed to reinitialize registers");
+			goto err;
+		}
+		vTaskDelay(1);
+	}
+
+	/* Query whether calibration is enabled */
+	ret = sensor_aht20_read_calib_en(&enable);
+	if (!ret) {
+		ESP_LOGE(TAG, "Failed to calibration status");
+		goto err;
+	}
+	ESP_LOGI(TAG, "Calibration enabled: %s", enable ? "true" : "false");
+
+	while(1) {
+		if (sensor_aht20_read_data(true)) {
+			aht20_active = true;
+			ESP_LOGD(TAG, "%5.1f%%RH %5.1f℃",
+				 aht20_humidity / 10.0,
+				 aht20_temperature / 10.0);
+			msg.type = EVENT_BUS_SENSOR_HUMIDITY_UPDATED;
+			msg.param1 = 0;
+			msg.param2 = aht20_humidity;
+			event_bus_send(&msg);
+			msg.type = EVENT_BUS_SENSOR_TEMPERATURE_UPDATED;
+			msg.param1 = 0;
+			msg.param2 = aht20_temperature;
+			event_bus_send(&msg);
+		}
+		vTaskDelay(pdMS_TO_TICKS(INTERVAL_TIME));
+	}
+
+err:
+	vTaskDelete(NULL);
+}
+
+uint16_t sensor_aht20_get_humidity(void)
+{
+	return aht20_humidity;
+}
+
+uint16_t sensor_aht20_get_temperature(void)
+{
+	return aht20_temperature;
+}
+
+bool sensor_aht20_is_active(void)
+{
+	return aht20_active;
+}
+
+void sensor_aht20_init(void *p)
+{
+	int ret;
+
+	ret = xTaskCreate(sensor_aht20_task, "AHT20 Task", 1300,
+			  NULL, tskIDLE_PRIORITY, NULL);
+	ESP_ERROR_CHECK(ret != pdPASS);
+}
