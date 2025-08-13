@@ -22,6 +22,7 @@ jobs:
       with:
         submodules: recursive
         path: esp8266-common
+        fetch-depth: 1
 
     # Get esp32-common
     - name: Get esp32-common
