@@ -33,6 +33,16 @@
 
 #include "i2c_bus.h"
 
+/* The bus value should be idle after NACK. */
+static void i2c_bus_stop_fix(void)
+{
+	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+
+	i2c_master_stop(cmd);
+	i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
+	i2c_cmd_link_delete(cmd);
+}
+
 bool i2c_bus_read(uint8_t addr, void *data, uint16_t size)
 {
 	int ret;
@@ -45,7 +55,12 @@ bool i2c_bus_read(uint8_t addr, void *data, uint16_t size)
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
 	i2c_cmd_link_delete(cmd);
 
-	return (bool)(ret == ESP_OK);
+	if (ret == ESP_OK)
+		return true;
+
+	i2c_bus_stop_fix();
+
+	return false;
 }
 
 bool i2c_bus_write(uint8_t addr, void *data, uint16_t size)
@@ -60,7 +75,12 @@ bool i2c_bus_write(uint8_t addr, void *data, uint16_t size)
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
 	i2c_cmd_link_delete(cmd);
 
-	return (bool)(ret == ESP_OK);
+	if (ret == ESP_OK)
+		return true;
+
+	i2c_bus_stop_fix();
+
+	return false;
 }
 
 bool i2c_bus_in_read(uint8_t addr, uint8_t in_addr, void *data, uint16_t size)
@@ -78,7 +98,12 @@ bool i2c_bus_in_read(uint8_t addr, uint8_t in_addr, void *data, uint16_t size)
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
 	i2c_cmd_link_delete(cmd);
 
-	return (bool)(ret == ESP_OK);
+	if (ret == ESP_OK)
+		return true;
+
+	i2c_bus_stop_fix();
+
+	return false;
 }
 
 bool i2c_bus_in_write(uint8_t addr, uint8_t in_addr, void *data, uint16_t size)
@@ -94,7 +119,12 @@ bool i2c_bus_in_write(uint8_t addr, uint8_t in_addr, void *data, uint16_t size)
 	ret = i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(1000));
 	i2c_cmd_link_delete(cmd);
 
-	return (bool)(ret == ESP_OK);
+	if (ret == ESP_OK)
+		return true;
+
+	i2c_bus_stop_fix();
+
+	return false;
 }
 
 static inline bool i2c_bud_dev_is_active(uint8_t addr)
@@ -133,9 +163,9 @@ void i2c_bus_init(uint8_t sda_gpio_num, uint8_t scl_gpio_num, const struct i2c_d
 	i2c_config_t conf = {
 		.mode = I2C_MODE_MASTER,
 		.sda_io_num = sda_gpio_num,
-		.sda_pullup_en = 1,
+		.sda_pullup_en = GPIO_PULLUP_DISABLE,	/* External pull-up */
 		.scl_io_num = scl_gpio_num,
-		.scl_pullup_en = 1,
+		.scl_pullup_en = GPIO_PULLUP_DISABLE,	/* External pull-up */
 		.clk_stretch_tick = 300,	/* 300 ticks, Clock stretch is about 210us */
 	};
 	ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_0, conf.mode));
