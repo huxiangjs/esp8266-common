@@ -183,6 +183,27 @@ static bool sensor_aht20_reg_reset(uint8_t value)
 	return true;
 }
 
+/* Reset */
+static bool sensor_aht20_soft_reset(void)
+{
+	bool ret;
+	uint8_t reset_cmd = AHT20_CMD_RESET;
+	uint8_t cmd_tables[] = { 0x08, 0x00, 0x00 };
+
+	ret = i2c_bus_write(DEFAULT_AHT20_ADDR, &reset_cmd, 1);
+	if (!ret)
+		return false;
+	vTaskDelay(pdMS_TO_TICKS(40));
+
+	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_CMD_INIT,
+			       cmd_tables, sizeof(cmd_tables));
+	if (!ret)
+		return false;
+	vTaskDelay(pdMS_TO_TICKS(40));
+
+	return true;
+}
+
 static void sensor_aht20_task(void *pvParameters)
 {
 	struct event_bus_msg msg;
@@ -191,6 +212,12 @@ static void sensor_aht20_task(void *pvParameters)
 	bool enable;
 
 	vTaskDelay(pdMS_TO_TICKS(40));
+
+	ret = sensor_aht20_soft_reset();
+	if (!ret) {
+		ESP_LOGE(TAG, "Failed to soft reset");
+		goto err;
+	}
 
 	/*
 	 * After power on, send 0x71 to read the status value for the first time
