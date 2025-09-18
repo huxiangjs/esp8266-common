@@ -38,9 +38,12 @@ static const char *TAG = "SENSOR-AHT20";
 
 #define INTERVAL_TIME			1000	/* 1000ms */
 
-#define AHT20_INADDR_MEASUREMENT	0xAC	/* Measurement */
-#define AHT20_INADDR_RESET		0xBA	/* Software reset */
-#define AHT20_INADDR_INIT		0xBE	/* Initialization */
+#define AHT20_CMD_INIT			0xBE	/* Initialization Command */
+#define AHT20_CMD_TRIG			0xAC	/* Triggered measurement */
+#define AHT20_CMD_RESET			0xBA	/* Software reset */
+
+#define AHT20_INADDR_WHAT		0x70	/* ? */
+#define AHT20_INADDR_STATUS		0x71	/* Status Register */
 
 static bool aht20_active;
 static uint16_t aht20_temperature;
@@ -49,7 +52,7 @@ static uint16_t aht20_humidity;
 /* Read the status register of AHT20 */
 static bool sensor_aht20_read_status(uint8_t *status)
 {
-	return i2c_bus_read(DEFAULT_AHT20_ADDR, status, 1);
+	return i2c_bus_in_read(DEFAULT_AHT20_ADDR, AHT20_INADDR_STATUS, status, 1);
 }
 
 /* Check whether the calibration bit is enabled */
@@ -62,39 +65,16 @@ static bool sensor_aht20_read_calib_en(bool *enable)
 	if (!ret)
 		return false;
 
-	*enable = (bool)(status & 0x08);
+	*enable = (bool)((status & 0x68) == 0x08);
 
 	return true;
 }
 
-#if 0
-/* Reset */
-static bool sensor_aht20_soft_reset(void)
+/* Send AC measurement command to AHT20 */
+static bool sensor_aht20_write_ac(void)
 {
-	bool ret;
-	uint8_t reset_cmd = AHT20_INADDR_RESET;
-	uint8_t cmd_tables[] = { 0x80, 0x00 };
-
-	ret = i2c_bus_write(DEFAULT_AHT20_ADDR, &reset_cmd, 1);
-	if (!ret)
-		return false;
-	vTaskDelay(pdMS_TO_TICKS(40));
-
-	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_INIT,
-			       cmd_tables, sizeof(cmd_tables));
-	if (!ret)
-		return false;
-	vTaskDelay(pdMS_TO_TICKS(40));
-
-	return true;
-}
-#endif
-
-/* Send measurement command to AHT20 */
-static bool sensor_aht20_start_measurement(void)
-{
-	uint8_t cmd_tables[] = { 0x33, 0x00 };
-	return i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_MEASUREMENT,
+	uint8_t cmd_tables[] = { AHT20_CMD_TRIG, 0x33, 0x00 };
+	return i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_WHAT,
 				cmd_tables, sizeof(cmd_tables));
 }
 
@@ -124,7 +104,7 @@ static bool sensor_aht20_read_data(bool crc_en)
 	uint16_t size = 6;
 	bool ret;
 
-	sensor_aht20_start_measurement();
+	sensor_aht20_write_ac();
 	vTaskDelay(pdMS_TO_TICKS(100));
 
 	do {
@@ -157,7 +137,7 @@ static bool sensor_aht20_read_data(bool crc_en)
 	 */
 	/* Read data */
 	size += (uint16_t)crc_en;
-	ret = i2c_bus_read(DEFAULT_AHT20_ADDR, buffer, size);
+	ret = i2c_bus_in_read(DEFAULT_AHT20_ADDR, AHT20_INADDR_STATUS, buffer, size);
 	if (!ret)
 		return false;
 
@@ -178,21 +158,87 @@ static bool sensor_aht20_read_data(bool crc_en)
 	return true;
 }
 
+/* Reinitialize registers */
+static bool sensor_aht20_reg_reset(uint8_t value)
+{
+	uint8_t buffer[3] = {0};
+	bool ret;
+
+	buffer[0] = value;
+	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_WHAT, buffer, 3);
+	if (!ret)
+		return false;
+
+	vTaskDelay(pdMS_TO_TICKS(80));
+	ret = i2c_bus_in_read(DEFAULT_AHT20_ADDR, AHT20_INADDR_STATUS, buffer, 3);
+	if (!ret)
+		return false;
+
+	vTaskDelay(pdMS_TO_TICKS(80));
+	buffer[0] = 0xB0 | value;
+	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_INADDR_WHAT, buffer, 3);
+	if (!ret)
+		return false;
+
+	return true;
+}
+
+/* Reset */
+static bool sensor_aht20_soft_reset(void)
+{
+	bool ret;
+	uint8_t reset_cmd = AHT20_CMD_RESET;
+	uint8_t cmd_tables[] = { 0x08, 0x00, 0x00 };
+
+	ret = i2c_bus_write(DEFAULT_AHT20_ADDR, &reset_cmd, 1);
+	if (!ret)
+		return false;
+	vTaskDelay(pdMS_TO_TICKS(40));
+
+	ret = i2c_bus_in_write(DEFAULT_AHT20_ADDR, AHT20_CMD_INIT,
+			       cmd_tables, sizeof(cmd_tables));
+	if (!ret)
+		return false;
+	vTaskDelay(pdMS_TO_TICKS(40));
+
+	return true;
+}
+
 static void sensor_aht20_task(void *pvParameters)
 {
 	struct event_bus_msg msg;
 	int ret;
+	uint8_t status;
 	bool enable;
 
 	vTaskDelay(pdMS_TO_TICKS(40));
 
-#if 0
 	ret = sensor_aht20_soft_reset();
 	if (!ret) {
 		ESP_LOGE(TAG, "Failed to soft reset");
 		goto err;
 	}
-#endif
+
+	/*
+	 * After power on, send 0x71 to read the status value for the first time
+	 * and check if the status word is 0x18.
+	 * If not, initialize the registers.
+	 */
+	ret = sensor_aht20_read_status(&status);
+	if (!ret) {
+		ESP_LOGE(TAG, "Failed to read status");
+		goto err;
+	}
+	if((status & 0x18) != 0x18) {
+		ret = sensor_aht20_reg_reset(0x1b) &&
+		      sensor_aht20_reg_reset(0x1c) &&
+		      sensor_aht20_reg_reset(0x1e);
+		if (!ret) {
+			ESP_LOGE(TAG, "Failed to reinitialize registers");
+			goto err;
+		}
+		vTaskDelay(1);
+	}
 
 	/* Query whether calibration is enabled */
 	ret = sensor_aht20_read_calib_en(&enable);
