@@ -101,7 +101,6 @@ static void sensor_bh1750_task(void *pvParameters)
 
 	while(1) {
 		if (sensor_bh1750_get_ambient_light()) {
-			bh1750_active = true;
 			ESP_LOGD(TAG, "Light Intensity: %5u lx", bh1750_data);
 			msg.param2 = bh1750_data;
 			event_bus_send(&msg);
@@ -131,4 +130,6 @@ void sensor_bh1750_init(void *p)
 	ret = xTaskCreate(sensor_bh1750_task, "BH1750 Task", 1024,
 			  NULL, tskIDLE_PRIORITY, NULL);
 	ESP_ERROR_CHECK(ret != pdPASS);
+
+	bh1750_active = true;
 }

@@ -204,7 +204,6 @@ static void sensor_aht20_task(void *pvParameters)
 
 	while(1) {
 		if (sensor_aht20_read_data(true)) {
-			aht20_active = true;
 			ESP_LOGD(TAG, "%5.1f%%RH %5.1f℃",
 				 aht20_humidity / 10.0,
 				 aht20_temperature / 10.0);
@@ -246,4 +245,6 @@ void sensor_aht20_init(void *p)
 	ret = xTaskCreate(sensor_aht20_task, "AHT20 Task", 1300,
 			  NULL, tskIDLE_PRIORITY, NULL);
 	ESP_ERROR_CHECK(ret != pdPASS);
+
+	aht20_active = true;
 }
