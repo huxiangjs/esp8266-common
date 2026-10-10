@@ -50,7 +50,7 @@ static const char *TAG = "SENSOR-SGP30";
 
 static bool sgp30_active;
 static uint16_t sgp30_tvoc;		/* tVOC, unit: ppb */
-static uint16_t sgp30_co2;		/* CO2eq, unit: ppm */
+static uint16_t sgp30_co2eq;		/* CO2eq, unit: ppm */
 
 /*
  * CRC8, polynomial 0x31 (x^8+x^5+x^4+1), init 0xFF,
@@ -208,7 +208,7 @@ static bool sensor_sgp30_measure_iaq(void)
 	if (!sensor_sgp30_read_words(words, 2))
 		return false;
 
-	sgp30_co2 = words[0];
+	sgp30_co2eq = words[0];
 	sgp30_tvoc = words[1];
 
 	return true;
@@ -244,14 +244,14 @@ static void sensor_sgp30_task(void *pvParameters)
 	while(1) {
 		if (sensor_sgp30_measure_iaq()) {
 			ESP_LOGI(TAG, "tVOC: %5u ppb, CO2eq: %5u ppm",
-				 sgp30_tvoc, sgp30_co2);
-			msg.type = EVENT_BUS_SENSOR_VOC_UPDATED;
+				 sgp30_tvoc, sgp30_co2eq);
+			msg.type = EVENT_BUS_SENSOR_TVOC_UPDATED;
 			msg.param1 = 0;
 			msg.param2 = sgp30_tvoc;
 			event_bus_send(&msg);
-			msg.type = EVENT_BUS_SENSOR_CO2_UPDATED;
+			msg.type = EVENT_BUS_SENSOR_CO2EQ_UPDATED;
 			msg.param1 = 0;
-			msg.param2 = sgp30_co2;
+			msg.param2 = sgp30_co2eq;
 			event_bus_send(&msg);
 		}
 		vTaskDelay(pdMS_TO_TICKS(INTERVAL_TIME - 20));
@@ -268,9 +268,9 @@ uint16_t sensor_sgp30_get_tvoc(void)
 }
 
 /* Unit: ppm */
-uint16_t sensor_sgp30_get_co2(void)
+uint16_t sensor_sgp30_get_co2eq(void)
 {
-	return sgp30_co2;
+	return sgp30_co2eq;
 }
 
 bool sensor_sgp30_is_active(void)

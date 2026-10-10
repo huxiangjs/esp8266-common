@@ -37,7 +37,7 @@ extern "C" {
 /* Unit: ppb */
 uint16_t sensor_sgp30_get_tvoc(void);
 /* Unit: ppm */
-uint16_t sensor_sgp30_get_co2(void);
+uint16_t sensor_sgp30_get_co2eq(void);
 bool sensor_sgp30_is_active(void);
 void sensor_sgp30_init(void *p);
 
