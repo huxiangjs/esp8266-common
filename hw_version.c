@@ -75,11 +75,16 @@ void hw_version_init(void)
 	adv_voltage = adv_voltage > 1000 ? 1000 : adv_voltage;
 	ESP_LOGI(TAG, "ADC voltage: %umV", adv_voltage);
 
+	/*
+	 * adv_voltage is clamped to 1000mV, which equals the last entry of
+	 * the lookup table, so the lookup always matches.
+	 */
 	for (i = 0; i < 11; i++) {
-		if (adv_voltage < lookup_table[i]) {
+		if (adv_voltage <= lookup_table[i]) {
 			hw_id = i;
 			break;
 		}
 	}
+
 	ESP_LOGI(TAG, "HW ID: %u", hw_id);
 }
