@@ -49,6 +49,7 @@ static const char *TAG = "SENSOR-SGP30";
 #define SGP30_FEATURESET_INCEPTIVE	0x21
 
 static bool sgp30_active;
+static volatile bool sgp30_stop_requested;
 static uint16_t sgp30_tvoc;		/* tVOC, unit: ppb */
 static uint16_t sgp30_co2eq;		/* CO2eq, unit: ppm */
 
@@ -241,7 +242,7 @@ static void sensor_sgp30_task(void *pvParameters)
 		goto err;
 	}
 
-	while(1) {
+	while (!sgp30_stop_requested) {
 		if (sensor_sgp30_measure_iaq()) {
 			ESP_LOGI(TAG, "tVOC: %5u ppb, CO2eq: %5u ppm",
 				 sgp30_tvoc, sgp30_co2eq);
@@ -258,6 +259,8 @@ static void sensor_sgp30_task(void *pvParameters)
 	}
 
 err:
+	/* The task is gone: no I2C transaction of its can be in flight */
+	sgp30_active = false;
 	vTaskDelete(NULL);
 }
 
@@ -273,7 +276,7 @@ uint16_t sensor_sgp30_get_co2eq(void)
 	return sgp30_co2eq;
 }
 
-bool sensor_sgp30_is_active(void)
+bool sensor_sgp30_is_active(void *p)
 {
 	return sgp30_active;
 }
@@ -287,4 +290,17 @@ void sensor_sgp30_init(void *p)
 	ESP_ERROR_CHECK(ret != pdPASS);
 
 	sgp30_active = true;
+}
+
+/*
+ * Request the polling task to stop (non-blocking): the task notices the
+ * request at the top of its loop, between two I2C transactions, and
+ * exits on its own; i2c_bus_stop() waits for that (and so does the
+ * warm reboot that usually follows, which does not fully reset the I2C
+ * bus).
+ */
+void sensor_sgp30_stop(void *p)
+{
+	if (sgp30_active)
+		sgp30_stop_requested = true;
 }

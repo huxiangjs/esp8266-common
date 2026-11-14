@@ -39,6 +39,7 @@ static const char *TAG = "SENSOR-BH1750";
 #define INTERVAL_TIME		200	/* 200ms */
 
 static bool bh1750_active;
+static volatile bool bh1750_stop_requested;
 static uint16_t bh1750_data;
 
 static inline bool sensor_bh1750_byte_write(uint8_t data)
@@ -99,7 +100,7 @@ static void sensor_bh1750_task(void *pvParameters)
 		goto err;
 	}
 
-	while(1) {
+	while (!bh1750_stop_requested) {
 		if (sensor_bh1750_get_ambient_light()) {
 			ESP_LOGD(TAG, "Light Intensity: %5u lx", bh1750_data);
 			msg.param2 = bh1750_data;
@@ -109,6 +110,8 @@ static void sensor_bh1750_task(void *pvParameters)
 	}
 
 err:
+	/* The task is gone: no I2C transaction of its can be in flight */
+	bh1750_active = false;
 	vTaskDelete(NULL);
 }
 
@@ -118,7 +121,7 @@ uint16_t sensor_bh1750_get_brightness(void)
 	return bh1750_data;
 }
 
-bool sensor_bh1750_is_active(void)
+bool sensor_bh1750_is_active(void *p)
 {
 	return bh1750_active;
 }
@@ -132,4 +135,17 @@ void sensor_bh1750_init(void *p)
 	ESP_ERROR_CHECK(ret != pdPASS);
 
 	bh1750_active = true;
+}
+
+/*
+ * Request the polling task to stop (non-blocking): the task notices the
+ * request at the top of its loop, between two I2C transactions, and
+ * exits on its own; i2c_bus_stop() waits for that (and so does the
+ * warm reboot that usually follows, which does not fully reset the I2C
+ * bus).
+ */
+void sensor_bh1750_stop(void *p)
+{
+	if (bh1750_active)
+		bh1750_stop_requested = true;
 }

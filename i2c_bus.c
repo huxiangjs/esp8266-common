@@ -29,9 +29,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_system.h>
+#include <esp_log.h>
 #include <driver/i2c.h>
 
 #include "i2c_bus.h"
+
+static const char *TAG = "I2C-BUS";
+
+/* The device list passed to i2c_bus_init() (for i2c_bus_stop()) */
+static const struct i2c_dev_init *i2c_dev_list;
+static uint16_t i2c_dev_num;
 
 /* The bus value should be idle after NACK. */
 static void i2c_bus_stop_fix(void)
@@ -182,4 +189,43 @@ void i2c_bus_init(uint8_t sda_gpio_num, uint8_t scl_gpio_num, const struct i2c_d
 		printf("Init: %s\n", list[index].name);
 		list[index].init(list[index].p);
 	}
+
+	i2c_dev_list = list;
+	i2c_dev_num = n;
+}
+
+void i2c_bus_stop(void)
+{
+	uint16_t index;
+	int i;
+	bool all_stopped;
+
+	/* Request every device's polling task to stop first (non-blocking) */
+	for (index = 0; index < i2c_dev_num; index++) {
+		if (i2c_dev_list[index].stop)
+			i2c_dev_list[index].stop(i2c_dev_list[index].p);
+	}
+
+	/*
+	 * Then wait for them all to exit (bounded): each task notices the
+	 * request at the top of its loop, between two I2C transactions; the
+	 * slowest one is an AHT20 read, which can take up to ~11s in the
+	 * worst case, so 20s is the bound. Devices that were not on the bus
+	 * have no task (is_active() false) and are skipped.
+	 */
+	for (i = 0; i < 200; i++) {
+		all_stopped = true;
+		for (index = 0; index < i2c_dev_num; index++) {
+			if (!i2c_dev_list[index].is_active)
+				continue;
+			if (i2c_dev_list[index].is_active(i2c_dev_list[index].p)) {
+				all_stopped = false;
+				break;
+			}
+		}
+		if (all_stopped)
+			return;
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
+	ESP_LOGW(TAG, "Not all device tasks stopped in time");
 }

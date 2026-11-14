@@ -43,6 +43,7 @@ static const char *TAG = "SENSOR-AHT20";
 #define AHT20_INADDR_INIT		0xBE	/* Initialization */
 
 static bool aht20_active;
+static volatile bool aht20_stop_requested;
 static uint16_t aht20_temperature;
 static uint16_t aht20_humidity;
 
@@ -202,7 +203,7 @@ static void sensor_aht20_task(void *pvParameters)
 	}
 	ESP_LOGI(TAG, "Calibration enabled: %s", enable ? "true" : "false");
 
-	while(1) {
+	while (!aht20_stop_requested) {
 		if (sensor_aht20_read_data(true)) {
 			ESP_LOGD(TAG, "%5.1f%%RH %5.1f℃",
 				 aht20_humidity / 10.0,
@@ -220,6 +221,8 @@ static void sensor_aht20_task(void *pvParameters)
 	}
 
 err:
+	/* The task is gone: no I2C transaction of its can be in flight */
+	aht20_active = false;
 	vTaskDelete(NULL);
 }
 
@@ -233,7 +236,7 @@ uint16_t sensor_aht20_get_temperature(void)
 	return aht20_temperature;
 }
 
-bool sensor_aht20_is_active(void)
+bool sensor_aht20_is_active(void *p)
 {
 	return aht20_active;
 }
@@ -247,4 +250,17 @@ void sensor_aht20_init(void *p)
 	ESP_ERROR_CHECK(ret != pdPASS);
 
 	aht20_active = true;
+}
+
+/*
+ * Request the polling task to stop (non-blocking): the task notices the
+ * request at the top of its loop, between two I2C transactions, and
+ * exits on its own; i2c_bus_stop() waits for that (and so does the
+ * warm reboot that usually follows, which does not fully reset the I2C
+ * bus).
+ */
+void sensor_aht20_stop(void *p)
+{
+	if (aht20_active)
+		aht20_stop_requested = true;
 }

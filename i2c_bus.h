@@ -26,6 +26,7 @@
 #define __I2C_BUS_H_
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,9 +37,30 @@ struct i2c_dev_init {
 	char *name;
 	void (*init)(void *p);
 	void *p;
+	/*
+	 * Optional: request the device's polling task to stop. It is
+	 * non-blocking: the task notices the request at a safe point
+	 * (between two I2C transactions) and exits on its own;
+	 * i2c_bus_stop() waits for that. NULL for devices without a
+	 * polling task.
+	 */
+	void (*stop)(void *p);
+	/* Optional: whether the device's polling task is (still) running. */
+	bool (*is_active)(void *p);
 };
 
 void i2c_bus_init(uint8_t sda_gpio_num, uint8_t scl_gpio_num, const struct i2c_dev_init *list, uint16_t n);
+
+/*
+ * Stop the polling tasks of all the devices of the list i2c_bus_init()
+ * was given: request every task to stop first, then wait for them all
+ * to exit, so no I2C transaction is in flight when this returns.
+ *
+ * Used before a warm reboot (esp_restart()), which does not fully reset
+ * the I2C bus: rebooting with a transaction in progress can leave the
+ * bus locked.
+ */
+void i2c_bus_stop(void);
 bool i2c_bus_read(uint8_t addr, void *data, uint16_t size);
 bool i2c_bus_write(uint8_t addr, void *data, uint16_t size);
 bool i2c_bus_in_read(uint8_t addr, uint8_t in_addr, void *data, uint16_t size);
