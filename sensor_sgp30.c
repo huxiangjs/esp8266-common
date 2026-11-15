@@ -38,6 +38,12 @@ static const char *TAG = "SENSOR-SGP30";
 
 #define INTERVAL_TIME		1000	/* 1000ms, 1Hz sampling rate */
 
+/*
+ * For the first 15s after iaq_init the sensor returns fixed values
+ * (400 ppm CO2eq, 0 ppb tVOC); don't report those cycles.
+ */
+#define SGP30_WARMUP_CYCLES	15
+
 /* SGP30 16-bit commands */
 #define SGP30_CMD_IAQ_INIT		0x2003	/* IAQ baseline init */
 #define SGP30_CMD_MEASURE_GAS		0x2008	/* Measure tVOC and CO2eq */
@@ -45,8 +51,12 @@ static const char *TAG = "SENSOR-SGP30";
 #define SGP30_CMD_GET_TVOC_BASELINE	0x20B3	/* Get tVOC inceptive baseline */
 #define SGP30_CMD_SET_TVOC_BASELINE	0x2077	/* Set tVOC inceptive baseline */
 
-/* The inceptive baseline feature is available from feature set 0x21 */
-#define SGP30_FEATURESET_INCEPTIVE	0x21
+/*
+ * The inceptive baseline feature is available from feature set
+ * 34 (0x22) and later (datasheet, footnote 9; the command table
+ * is titled "Feature Set 0x0022").
+ */
+#define SGP30_FEATURESET_INCEPTIVE	0x22
 
 static bool sgp30_active;
 static volatile bool sgp30_stop_requested;
@@ -166,7 +176,7 @@ static bool sensor_sgp30_iaq_init(void)
 }
 
 /*
- * Activate the tVOC inceptive baseline (feature set 0x21 and later).
+ * Activate the tVOC inceptive baseline (feature set 0x22 and later).
  * It improves the tVOC accuracy on the very first start-up under
  * bad air condition.
  */
@@ -220,6 +230,7 @@ static void sensor_sgp30_task(void *pvParameters)
 	struct event_bus_msg msg;
 	uint16_t fs_version;
 	uint8_t product_type = 0xff;
+	uint8_t warmup;
 
 	vTaskDelay(pdMS_TO_TICKS(40));
 
@@ -242,19 +253,31 @@ static void sensor_sgp30_task(void *pvParameters)
 		goto err;
 	}
 
+	/*
+	 * For the first 15s after iaq_init the sensor returns fixed
+	 * values (400 ppm CO2eq, 0 ppb tVOC); keep measuring at 1 Hz
+	 * (the baseline algorithm requires it) but don't report those
+	 * values as real measurements.
+	 */
+	warmup = SGP30_WARMUP_CYCLES;
+
 	while (!sgp30_stop_requested) {
 		if (sensor_sgp30_measure_iaq()) {
-			ESP_LOGI(TAG, "tVOC: %5u ppb, CO2eq: %5u ppm",
-				 sgp30_tvoc, sgp30_co2eq);
-			msg.type = EVENT_BUS_SENSOR_TVOC_UPDATED;
-			msg.param1 = 0;
-			msg.param2 = sgp30_tvoc;
-			event_bus_send(&msg);
-			msg.type = EVENT_BUS_SENSOR_CO2EQ_UPDATED;
-			msg.param1 = 0;
-			msg.param2 = sgp30_co2eq;
-			event_bus_send(&msg);
+			ESP_LOGI(TAG, "tVOC: %5u ppb, CO2eq: %5u ppm%s",
+				 sgp30_tvoc, sgp30_co2eq, warmup ? " (warm-up)" : "");
+			if (warmup == 0) {
+				msg.type = EVENT_BUS_SENSOR_TVOC_UPDATED;
+				msg.param1 = 0;
+				msg.param2 = sgp30_tvoc;
+				event_bus_send(&msg);
+				msg.type = EVENT_BUS_SENSOR_CO2EQ_UPDATED;
+				msg.param1 = 0;
+				msg.param2 = sgp30_co2eq;
+				event_bus_send(&msg);
+			}
 		}
+		if (warmup)
+			warmup--;
 		vTaskDelay(pdMS_TO_TICKS(INTERVAL_TIME - 20));
 	}
 
