@@ -176,6 +176,30 @@ static bool sensor_sgp30_iaq_init(void)
 }
 
 /*
+ * Soft-reset the sensor: the I2C general call 0x0006 (datasheet 6.4,
+ * Table 11). The sensor survives a reboot of the MCU (an OTA
+ * restart, an app restart, ...) and may be in measurement mode, in
+ * which it does not acknowledge the plain read probe of the bus
+ * scan; only the sleep state - entered after power-up or a soft
+ * reset - is "ready to receive commands" (datasheet 6.1, Table 3).
+ * The reset puts the sensor back in that state, so the scan finds
+ * it.
+ *
+ * Note: a general call reaches every device on the bus that supports
+ * it; on this bus only the SGP30 does.
+ */
+static bool sensor_sgp30_soft_reset(void)
+{
+	uint8_t cmd = 0x06;
+
+	if (!i2c_bus_write(0x00, &cmd, sizeof(cmd)))
+		return false;
+	vTaskDelay(pdMS_TO_TICKS(10));
+
+	return true;
+}
+
+/*
  * Activate the tVOC inceptive baseline (feature set 0x22 and later).
  * It improves the tVOC accuracy on the very first start-up under
  * bad air condition.
@@ -304,7 +328,18 @@ bool sensor_sgp30_is_active(void *p)
 	return sgp30_active;
 }
 
+/*
+ * Prepare the sensor for the bus scan (the i2c_dev_init.init
+ * callback, run by i2c_bus_init() before the scan on every boot):
+ * soft reset it, so it is in the sleep state the scan can find,
+ * no matter what state the previous boot left it in.
+ */
 void sensor_sgp30_init(void *p)
+{
+	sensor_sgp30_soft_reset();
+}
+
+void sensor_sgp30_start(void *p)
 {
 	int ret;
 

@@ -37,7 +37,7 @@ extern "C" {
 
 uint16_t sensor_bh1750_get_brightness(void);
 bool sensor_bh1750_is_active(void *p);
-void sensor_bh1750_init(void *p);
+void sensor_bh1750_start(void *p);
 void sensor_bh1750_stop(void *p);
 
 #ifdef __cplusplus

@@ -35,7 +35,16 @@ extern "C" {
 struct i2c_dev_init {
 	uint8_t addr;
 	char *name;
+	/*
+	 * Optional: preparation, run by i2c_bus_init() before the bus
+	 * scan: put the device in a state in which the scan can find
+	 * it (e.g. the SGP30, which the scan only sees in its sleep
+	 * state, is soft-reset there). NULL for devices that need
+	 * none.
+	 */
 	void (*init)(void *p);
+	/* Start the device's polling task (run for the devices the scan found) */
+	void (*start)(void *p);
 	void *p;
 	/*
 	 * Optional: request the device's polling task to stop. It is

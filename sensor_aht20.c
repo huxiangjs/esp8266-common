@@ -241,7 +241,7 @@ bool sensor_aht20_is_active(void *p)
 	return aht20_active;
 }
 
-void sensor_aht20_init(void *p)
+void sensor_aht20_start(void *p)
 {
 	int ret;
 

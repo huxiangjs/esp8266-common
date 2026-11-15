@@ -40,6 +40,7 @@ uint16_t sensor_sgp30_get_tvoc(void);
 uint16_t sensor_sgp30_get_co2eq(void);
 bool sensor_sgp30_is_active(void *p);
 void sensor_sgp30_init(void *p);
+void sensor_sgp30_start(void *p);
 void sensor_sgp30_stop(void *p);
 
 #ifdef __cplusplus

@@ -178,16 +178,22 @@ void i2c_bus_init(uint8_t sda_gpio_num, uint8_t scl_gpio_num, const struct i2c_d
 	ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_0, conf.mode));
 	ESP_ERROR_CHECK(i2c_param_config(I2C_NUM_0, &conf));
 
+	/* Prepare the devices that need it, before the scan can find them */
+	for (index = 0; index < n; index++) {
+		if (list[index].init)
+			list[index].init(list[index].p);
+	}
+
 	/* Find the address on the bus where there is an ACK */
 	memset(active, 0, sizeof(active));
 	i2c_bud_scan(active);
 
-	/* Init device */
+	/* Start the devices found by the scan */
 	for (index = 0; index < n; index++) {
 		if (!active[list[index].addr])
 			continue;
-		printf("Init: %s\n", list[index].name);
-		list[index].init(list[index].p);
+		printf("Start: %s\n", list[index].name);
+		list[index].start(list[index].p);
 	}
 
 	i2c_dev_list = list;

@@ -37,7 +37,7 @@ extern "C" {
 uint16_t sensor_aht20_get_humidity(void);
 uint16_t sensor_aht20_get_temperature(void);
 bool sensor_aht20_is_active(void *p);
-void sensor_aht20_init(void *p);
+void sensor_aht20_start(void *p);
 void sensor_aht20_stop(void *p);
 
 #ifdef __cplusplus
