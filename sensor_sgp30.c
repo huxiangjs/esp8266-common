@@ -38,6 +38,12 @@ static const char *TAG = "SENSOR-SGP30";
 
 #define INTERVAL_TIME		1000	/* 1000ms, 1Hz sampling rate */
 
+/*
+ * For the first 15s after iaq_init the sensor returns fixed values
+ * (400 ppm CO2eq, 0 ppb tVOC); don't report those cycles.
+ */
+#define SGP30_WARMUP_CYCLES	15
+
 /* SGP30 16-bit commands */
 #define SGP30_CMD_IAQ_INIT		0x2003	/* IAQ baseline init */
 #define SGP30_CMD_MEASURE_GAS		0x2008	/* Measure tVOC and CO2eq */
@@ -45,8 +51,12 @@ static const char *TAG = "SENSOR-SGP30";
 #define SGP30_CMD_GET_TVOC_BASELINE	0x20B3	/* Get tVOC inceptive baseline */
 #define SGP30_CMD_SET_TVOC_BASELINE	0x2077	/* Set tVOC inceptive baseline */
 
-/* The inceptive baseline feature is available from feature set 0x21 */
-#define SGP30_FEATURESET_INCEPTIVE	0x21
+/*
+ * The inceptive baseline feature is available from feature set
+ * 34 (0x22) and later (datasheet, footnote 9; the command table
+ * is titled "Feature Set 0x0022").
+ */
+#define SGP30_FEATURESET_INCEPTIVE	0x22
 
 static bool sgp30_active;
 static volatile bool sgp30_stop_requested;
@@ -166,7 +176,31 @@ static bool sensor_sgp30_iaq_init(void)
 }
 
 /*
- * Activate the tVOC inceptive baseline (feature set 0x21 and later).
+ * Soft-reset the sensor: the I2C general call 0x0006 (datasheet 6.4,
+ * Table 11). The sensor survives a reboot of the MCU (an OTA
+ * restart, an app restart, ...) and may be in measurement mode, in
+ * which it does not acknowledge the plain read probe of the bus
+ * scan; only the sleep state - entered after power-up or a soft
+ * reset - is "ready to receive commands" (datasheet 6.1, Table 3).
+ * The reset puts the sensor back in that state, so the scan finds
+ * it.
+ *
+ * Note: a general call reaches every device on the bus that supports
+ * it; on this bus only the SGP30 does.
+ */
+static bool sensor_sgp30_soft_reset(void)
+{
+	uint8_t cmd = 0x06;
+
+	if (!i2c_bus_write(0x00, &cmd, sizeof(cmd)))
+		return false;
+	vTaskDelay(pdMS_TO_TICKS(10));
+
+	return true;
+}
+
+/*
+ * Activate the tVOC inceptive baseline (feature set 0x22 and later).
  * It improves the tVOC accuracy on the very first start-up under
  * bad air condition.
  */
@@ -220,6 +254,7 @@ static void sensor_sgp30_task(void *pvParameters)
 	struct event_bus_msg msg;
 	uint16_t fs_version;
 	uint8_t product_type = 0xff;
+	uint8_t warmup;
 
 	vTaskDelay(pdMS_TO_TICKS(40));
 
@@ -242,19 +277,31 @@ static void sensor_sgp30_task(void *pvParameters)
 		goto err;
 	}
 
+	/*
+	 * For the first 15s after iaq_init the sensor returns fixed
+	 * values (400 ppm CO2eq, 0 ppb tVOC); keep measuring at 1 Hz
+	 * (the baseline algorithm requires it) but don't report those
+	 * values as real measurements.
+	 */
+	warmup = SGP30_WARMUP_CYCLES;
+
 	while (!sgp30_stop_requested) {
 		if (sensor_sgp30_measure_iaq()) {
-			ESP_LOGI(TAG, "tVOC: %5u ppb, CO2eq: %5u ppm",
-				 sgp30_tvoc, sgp30_co2eq);
-			msg.type = EVENT_BUS_SENSOR_TVOC_UPDATED;
-			msg.param1 = 0;
-			msg.param2 = sgp30_tvoc;
-			event_bus_send(&msg);
-			msg.type = EVENT_BUS_SENSOR_CO2EQ_UPDATED;
-			msg.param1 = 0;
-			msg.param2 = sgp30_co2eq;
-			event_bus_send(&msg);
+			ESP_LOGI(TAG, "tVOC: %5u ppb, CO2eq: %5u ppm%s",
+				 sgp30_tvoc, sgp30_co2eq, warmup ? " (warm-up)" : "");
+			if (warmup == 0) {
+				msg.type = EVENT_BUS_SENSOR_TVOC_UPDATED;
+				msg.param1 = 0;
+				msg.param2 = sgp30_tvoc;
+				event_bus_send(&msg);
+				msg.type = EVENT_BUS_SENSOR_CO2EQ_UPDATED;
+				msg.param1 = 0;
+				msg.param2 = sgp30_co2eq;
+				event_bus_send(&msg);
+			}
 		}
+		if (warmup)
+			warmup--;
 		vTaskDelay(pdMS_TO_TICKS(INTERVAL_TIME - 20));
 	}
 
@@ -281,7 +328,18 @@ bool sensor_sgp30_is_active(void *p)
 	return sgp30_active;
 }
 
+/*
+ * Prepare the sensor for the bus scan (the i2c_dev_init.init
+ * callback, run by i2c_bus_init() before the scan on every boot):
+ * soft reset it, so it is in the sleep state the scan can find,
+ * no matter what state the previous boot left it in.
+ */
 void sensor_sgp30_init(void *p)
+{
+	sensor_sgp30_soft_reset();
+}
+
+void sensor_sgp30_start(void *p)
 {
 	int ret;
 

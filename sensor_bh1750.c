@@ -126,7 +126,7 @@ bool sensor_bh1750_is_active(void *p)
 	return bh1750_active;
 }
 
-void sensor_bh1750_init(void *p)
+void sensor_bh1750_start(void *p)
 {
 	int ret;
 
